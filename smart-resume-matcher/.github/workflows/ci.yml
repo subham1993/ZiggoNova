@@ -1,0 +1,47 @@
+smart-resume-matcher/
+│
+├── .github/
+│   └── workflows/        # GitHub Actions for CI/CD (tests, linting, deployment)
+│       └── ci.yml
+│
+├── data/
+│   ├── raw/              # Unprocessed datasets
+│   ├── processed/        # Cleaned/feature engineered data
+│   └── external/         # Public datasets / embeddings
+│
+├── docs/                 # Documentation, diagrams, and project notes
+│   ├── architecture.png
+│   └── flow-diagram.md
+│
+├── notebooks/            # Jupyter Notebooks for exploration & experiments
+│   ├── 01_data_cleaning.ipynb
+│   ├── 02_feature_engineering.ipynb
+│   ├── 03_model_training.ipynb
+│   └── 04_evaluation.ipynb
+│
+├── src/                  # Main source code package
+│   ├── __init__.py
+│   ├── config.py         # Global configurations
+│   ├── data_loader.py    # Data preprocessing
+│   ├── embeddings.py     # Embedding generation
+│   ├── model.py          # ML/DL model training and inference
+│   ├── matcher.py        # Resume–JD similarity & scoring logic
+│   ├── api.py            # REST API endpoints (FastAPI/Flask)
+│   └── ui/               # Frontend (React/Streamlit/Gradio)
+│       └── app.py
+│
+├── tests/                # Unit and integration tests
+│   ├── test_data_loader.py
+│   ├── test_embeddings.py
+│   ├── test_model.py
+│   └── test_api.py
+│
+├── requirements.txt      # Python dependencies
+├── environment.yml       # Conda environment (optional)
+├── Dockerfile            # Docker containerization
+├── docker-compose.yml    # For multi-service setup (DB + API + UI)
+├── setup.py              # Packaging the project
+├── .gitignore
+├── LICENSE               # License file (MIT, Apache 2.0, etc.)
+├── README.md             # Project overview and usage guide
+└── CONTRIBUTING.md       # Guidelines for contributors
