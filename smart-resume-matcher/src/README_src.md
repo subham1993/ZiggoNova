@@ -1,2 +1,0 @@
-\# Main source code package
-
