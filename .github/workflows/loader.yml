@@ -26,4 +26,4 @@ jobs:
           PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
           DATA_URL: ${{ secrets.DATA_URL }}
           LOCAL_FILE: "" 
-        run: python etl.py
+        run: stocks-loader/etl.py
