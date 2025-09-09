@@ -44,10 +44,10 @@ def engine():
 
 def upsert(df, eng):
     with eng.begin() as conn:
-        conn.exec_driver_sql("CREATE TEMP TABLE _stage (LIKE IntradayBullishStocks INCLUDING ALL);")
+        conn.exec_driver_sql("CREATE TEMP TABLE _stage (LIKE BullishStocks INCLUDING ALL);")
         df.to_sql("_stage", conn, if_exists="append", index=False)
         conn.execute(text("""
-        INSERT INTO IntradayBullishStocks AS t (
+        INSERT INTO BullishStocks AS t (
           TradeDateHour, Ticker, Exchange, StockName, Sector, LastGBP, GapPct, RelVol,
           AvgVol30d, Range52wPos, ATRpct, FloatShares, FreeFloatPct, ShortInterestPct,
           MarketCapGBP, Conviction, Catalyst, SourceURL, NewsTimestamp
