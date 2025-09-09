@@ -1,0 +1,29 @@
+name: Hourly ETL to Neon
+
+on:
+  schedule:
+    - cron: "5 * * * *"   # every hour at minute 5
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests sqlalchemy psycopg2-binary openpyxl
+      - name: Run ETL
+        env:
+          PG_HOST: ${{ secrets.PG_HOST }}
+          PG_PORT: ${{ secrets.PG_PORT }}
+          PG_DATABASE: ${{ secrets.PG_DATABASE }}
+          PG_USER: ${{ secrets.PG_USER }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          DATA_URL: ${{ secrets.DATA_URL }}
+          LOCAL_FILE: "" 
+        run: python etl.py
