@@ -1,0 +1,29 @@
+name: Agent → Supabase (15min trading hours)
+
+on:
+  schedule:
+    # Every 15 minutes between 06:00–18:00 UTC, Mon–Fri
+    - cron: "*/15 6-18 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai requests pandas
+
+      - name: Run ChatGPT agent → Supabase
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_PROJECT_URL: ${{ secrets.SUPABASE_PROJECT_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: python stocks-loader/agent_to_supabase.py
