@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: earnings-tracker
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    autoDeploy: true
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+databases:
+  - name: earnings-db
+    plan: free
