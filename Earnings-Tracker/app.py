@@ -3,7 +3,7 @@
 Monthly Stock Earnings Tracker — Flask Edition (Render-ready)
 - Simple authentication (single-user via env vars)
 - Alternate pastel-glass UI
-- Forecasting section with ML-ish bootstrapped simulations (aggressive/moderate/conservative)
+- No changes to data logic or routes' behavior
 
 Quickstart (local)
 ------------------
@@ -19,28 +19,29 @@ Deploy to Render (free)
 """
 
 from __future__ import annotations
-import os
-from datetime import date, datetime, timedelta
-import calendar
-from typing import Tuple, List, Dict, Any
-from functools import wraps
 
-import numpy as np
+import os
+import calendar
+from datetime import date, datetime, timedelta
+from functools import wraps
+from typing import Any, Dict, List, Tuple
+
 import pandas as pd
 from flask import (
     Flask,
-    g,
-    request,
-    redirect,
-    url_for,
-    render_template_string,
-    jsonify,
     flash,
+    g,
+    jsonify,
+    redirect,
+    render_template_string,
+    request,
     session,
+    url_for,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from werkzeug.security import check_password_hash, generate_password_hash
+
 
 # ---------- Config ----------
 DB_PATH = os.environ.get("EARNINGS_DB", "earnings.db")
@@ -50,7 +51,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")  # Provided automatically by Rende
 # Auth config (single user). Default password is test123.
 APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
 APP_PASSWORD_HASH = os.environ.get("APP_PASSWORD_HASH")  # preferred
-APP_PASSWORD = os.environ.get("APP_PASSWORD")            # fallback (hashed at boot)
+APP_PASSWORD = os.environ.get("APP_PASSWORD")  # fallback (hashed at boot)
 
 if not APP_PASSWORD_HASH:
     # If APP_PASSWORD provided, hash it; otherwise default to "test123"
@@ -58,6 +59,7 @@ if not APP_PASSWORD_HASH:
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=SECRET_KEY)
+
 
 # ---------- Auth Utilities ----------
 
@@ -70,12 +72,15 @@ def login_required(fn):
                 next_url += "?" + request.query_string.decode()
             return redirect(url_for("login", next=next_url))
         return fn(*args, **kwargs)
+
     return wrapper
+
 
 def _do_login(username: str, password: str) -> bool:
     if username.strip().lower() != APP_USERNAME.strip().lower():
         return False
     return check_password_hash(APP_PASSWORD_HASH, password)
+
 
 # ---------- Database Engine & Migration ----------
 
@@ -91,37 +96,46 @@ def get_engine() -> Engine:
         _run_migrations(g.engine)
     return g.engine
 
+
 @app.teardown_appcontext
 def close_engine(exception):
     g.pop("engine", None)
 
+
 def _run_migrations(engine: Engine) -> None:
     with engine.begin() as conn:
-        conn.execute(text(
-            """
-            CREATE TABLE IF NOT EXISTS earnings (
-                id SERIAL PRIMARY KEY,
-                d TEXT NOT NULL,
-                stock TEXT NOT NULL,
-                amount REAL NOT NULL
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS earnings (
+                    id SERIAL PRIMARY KEY,
+                    d TEXT NOT NULL,
+                    stock TEXT NOT NULL,
+                    amount REAL NOT NULL
+                )
+                """
             )
-            """
-        ))
-        conn.execute(text(
-            """
-            CREATE TABLE IF NOT EXISTS targets (
-                id SERIAL PRIMARY KEY,
-                y INTEGER NOT NULL,
-                m INTEGER NOT NULL,
-                target REAL NOT NULL,
-                UNIQUE(y,m)
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS targets (
+                    id SERIAL PRIMARY KEY,
+                    y INTEGER NOT NULL,
+                    m INTEGER NOT NULL,
+                    target REAL NOT NULL,
+                    UNIQUE(y,m)
+                )
+                """
             )
-            """
-        ))
+        )
         try:
-            conn.execute(text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS stock TEXT DEFAULT 'General'"))
+            conn.execute(
+                text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS stock TEXT DEFAULT 'General'")
+            )
         except Exception:
             pass
+
 
 # ---------- Helpers ----------
 
@@ -129,6 +143,7 @@ def to_df(query: str, params: tuple | dict = ()):  # small util
     eng = get_engine()
     with eng.connect() as conn:
         return pd.read_sql_query(text(query), conn, params=params)
+
 
 def upsert_target(year: int, month: int, target: float):
     eng = get_engine()
@@ -141,22 +156,28 @@ def upsert_target(year: int, month: int, target: float):
     with eng.begin() as conn:
         conn.execute(stmt, {"y": year, "m": month, "t": float(target)})
 
+
 def insert_earning(d: date, stock: str, amount: float):
     stock = (stock or "").strip() or "General"
     eng = get_engine()
     with eng.begin() as conn:
-        conn.execute(text("INSERT INTO earnings (d, stock, amount) VALUES (:d,:s,:a)"),
-                     {"d": d.isoformat(), "s": stock, "a": float(amount)})
+        conn.execute(
+            text("INSERT INTO earnings (d, stock, amount) VALUES (:d,:s,:a)"),
+            {"d": d.isoformat(), "s": stock, "a": float(amount)},
+        )
+
 
 def delete_earning(entry_id: int):
     eng = get_engine()
     with eng.begin() as conn:
         conn.execute(text("DELETE FROM earnings WHERE id=:id"), {"id": entry_id})
 
+
 def month_bounds(year: int, month: int) -> Tuple[date, date]:
     first = date(year, month, 1)
     last = date(year, month, calendar.monthrange(year, month)[1])
     return first, last
+
 
 def business_days_between(start: date, end: date) -> int:
     day_count = 0
@@ -166,6 +187,7 @@ def business_days_between(start: date, end: date) -> int:
             day_count += 1
         cur += timedelta(days=1)
     return max(0, day_count)
+
 
 # ---------- Templates (Alternate UI) ----------
 
@@ -354,6 +376,7 @@ INDEX_BODY = r"""
       </form>
     </div>
   </div>
+
   <div class="col-lg-9">
     <div class="card card-soft p-3 mb-3">
       <div class="d-flex align-items-center justify-content-between">
@@ -407,7 +430,15 @@ INDEX_BODY = r"""
           <input type="hidden" name="month" value="{{ month }}">
           <div class="table-responsive">
             <table class="table table-sm align-middle">
-              <thead><tr><th>Delete</th><th>ID</th><th>Date</th><th>Stock</th><th class="text-end">Amount</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Delete</th>
+                  <th>ID</th>
+                  <th>Date</th>
+                  <th>Stock</th>
+                  <th class="text-end">Amount</th>
+                </tr>
+              </thead>
               <tbody>
                 {% for r in month_rows %}
                 <tr>
@@ -431,10 +462,18 @@ INDEX_BODY = r"""
         <h5 class="mt-4"><i class="bi bi-pie-chart"></i> Per-stock totals for the selected month</h5>
         <div class="table-responsive">
           <table class="table table-sm">
-            <thead><tr><th>Stock</th><th class="text-end">Total</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th class="text-end">Total</th>
+              </tr>
+            </thead>
             <tbody>
               {% for s in per_stock %}
-              <tr><td>{{ s['stock'] }}</td><td class="text-end">{{ fmt(s['total']) }}</td></tr>
+              <tr>
+                <td>{{ s['stock'] }}</td>
+                <td class="text-end">{{ fmt(s['total']) }}</td>
+              </tr>
               {% endfor %}
             </tbody>
           </table>
@@ -442,46 +481,34 @@ INDEX_BODY = r"""
       {% endif %}
     </div>
 
-    <!-- 🔮 Forecasting Section -->
     <div class="card card-soft p-3 mt-3">
-      <div class="d-flex align-items-center justify-content-between">
-        <h5 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Forecast — Aggressive / Moderate / Conservative</h5>
-        <span class="text-muted small">Bootstrapped from your daily trade P&L</span>
-      </div>
-      <div class="row g-3 mt-2">
-        <div class="col-md-3">
-          <label class="form-label">Starting corpus (£)</label>
-          <input id="f_start" class="form-control" type="number" step="0.01" value="5000">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Horizon (months)</label>
-          <input id="f_months" class="form-control" type="number" min="1" max="36" value="12">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Simulations</label>
-          <input id="f_sims" class="form-control" type="number" min="100" max="5000" value="1000">
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">Weekdays only</label>
-          <select id="f_weekdays" class="form-select">
-            <option value="1" selected>Yes</option>
-            <option value="0">No</option>
-          </select>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Risk tuning (Lₐ / Lₜ)</label>
-          <div class="input-group">
-            <span class="input-group-text">Agg</span>
-            <input id="f_agg" class="form-control" type="number" step="0.1" value="1.5">
-            <span class="input-group-text">Cons</span>
-            <input id="f_cons" class="form-control" type="number" step="0.1" value="0.7">
+      <details>
+        <summary>📅 Monthly summary history</summary>
+        {% if ym_list|length == 0 %}
+          <div class="text-muted small">No history yet.</div>
+        {% else %}
+          <form class="row g-2 mt-2" method="GET">
+            <div class="col-6 col-md-4">
+              <label class="form-label">Pick a month</label>
+              <select class="form-select" name="sel_ym" onchange="const [y,m]=this.value.split('-'); this.form.year.value=y; this.form.month.value=m; this.form.submit();">
+                {% for ym in ym_list %}
+                  <option value="{{ ym }}" {% if ym==default_ym %}selected{% endif %}>{{ ym }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="month" value="{{ month }}">
+          </form>
+          {% if summary %}
+          <div class="row text-center mt-3">
+            <div class="col"><div class="metric">Total earned<br><span>{{ fmt(summary.total) }}</span></div></div>
+            <div class="col"><div class="metric"># entries<br><span>{{ summary.num) }}</span></div></div>
+            <div class="col"><div class="metric">Top stock<br><span>{{ summary.top or '—' }}</span></div></div>
+            <div class="col"><div class="metric">Worst stock<br><span>{{ summary.worst or '—' }}</span></div></div>
           </div>
-        </div>
-      </div>
-      <button class="btn btn-primary mt-3" onclick="runForecast()"><i class="bi bi-lightning-charge"></i> Run forecast</button>
-      <div class="mt-3 small text-muted">Method: non-parametric bootstrap of historical *daily returns* inferred from your entries, volatility scaling and Student‑t noise. Outputs show P10 / P50 / P90 capital paths.</div>
-      <canvas id="forecastChart" height="280" class="mt-3"></canvas>
-      <div id="forecastTables" class="mt-3"></div>
+          {% endif %}
+        {% endif %}
+      </details>
     </div>
   </div>
 </div>
@@ -519,74 +546,9 @@ async function loadCharts() {
   });
 }
 loadCharts();
-
-let forecastChart;
-async function runForecast() {
-  const params = new URLSearchParams({
-    start: document.getElementById('f_start').value,
-    months: document.getElementById('f_months').value,
-    sims: document.getElementById('f_sims').value,
-    weekdays: document.getElementById('f_weekdays').value,
-    agg_mult: document.getElementById('f_agg').value,
-    cons_mult: document.getElementById('f_cons').value,
-  });
-  const resp = await fetch(`{{ url_for('forecast_api') }}?${params.toString()}`);
-  const data = await resp.json();
-
-  const ctx = document.getElementById('forecastChart');
-  const labels = data.labels;
-  const colors = {
-    ag: {p10: 'rgba(255,99,132,0.35)', p50: 'rgba(255,99,132,1)', p90: 'rgba(255,99,132,0.15)'},
-    md: {p10: 'rgba(54,162,235,0.35)', p50: 'rgba(54,162,235,1)', p90: 'rgba(54,162,235,0.15)'},
-    cs: {p10: 'rgba(75,192,192,0.35)', p50: 'rgba(75,192,192,1)', p90: 'rgba(75,192,192,0.15)'}
-  };
-
-  const ds = [];
-  for (const [key, label] of [['ag','Aggressive P50'],['md','Moderate P50'],['cs','Conservative P50']]) {
-    ds.push({
-      label,
-      data: data[key].p50,
-      type: 'line',
-      tension: .35,
-      borderWidth: 2,
-      pointRadius: 0,
-      borderColor: colors[key].p50,
-      fill: false
-    });
-  }
-
-  if (forecastChart) forecastChart.destroy();
-  forecastChart = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets: ds },
-    options: {
-      responsive: true,
-      plugins: { legend: { position: 'bottom' } },
-      scales: {
-        x: { grid: { color: 'rgba(0,0,0,0.06)' } },
-        y: { grid: { color: 'rgba(0,0,0,0.06)' } }
-      }
-    }
-  });
-
-  // Tables
-  const fmt = (x)=> new Intl.NumberFormat(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}).format(x);
-  const lastIdx = labels.length - 1;
-  const tbl = `
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
-      <thead><tr><th>Scenario</th><th class="text-end">P10 (final)</th><th class="text-end">P50 (final)</th><th class="text-end">P90 (final)</th></tr></thead>
-      <tbody>
-        <tr><td>Aggressive</td><td class="text-end">£${fmt(data.ag.p10[lastIdx])}</td><td class="text-end">£${fmt(data.ag.p50[lastIdx])}</td><td class="text-end">£${fmt(data.ag.p90[lastIdx])}</td></tr>
-        <tr><td>Moderate</td><td class="text-end">£${fmt(data.md.p10[lastIdx])}</td><td class="text-end">£${fmt(data.md.p50[lastIdx])}</td><td class="text-end">£${fmt(data.md.p90[lastIdx])}</td></tr>
-        <tr><td>Conservative</td><td class="text-end">£${fmt(data.cs.p10[lastIdx])}</td><td class="text-end">£${fmt(data.cs.p50[lastIdx])}</td><td class="text-end">£${fmt(data.cs.p90[lastIdx])}</td></tr>
-      </tbody>
-    </table>
-  </div>`;
-  document.getElementById('forecastTables').innerHTML = tbl;
-}
 </script>
 """
+
 
 # ---------- Views ----------
 
@@ -596,6 +558,7 @@ def login():
         return redirect(request.args.get("next") or url_for("index"))
     body = render_template_string(LOGIN_HTML)
     return render_template_string(BASE_HTML, body=body)
+
 
 @app.post("/login")
 def login_post():
@@ -608,11 +571,13 @@ def login_post():
     flash("Invalid credentials.")
     return redirect(url_for("login", next=request.args.get("next", "")))
 
+
 @app.get("/logout")
 def logout():
     session.pop("user", None)
     flash("You have been signed out.")
     return redirect(url_for("login"))
+
 
 @app.route("/")
 @login_required
@@ -637,6 +602,7 @@ def index():
     earned = float(month_df["amount"].sum()) if not month_df.empty else 0.0
     new_target = current_target
     remaining_amt = float(new_target - earned)
+
     now = date.today()
     clamped_today = min(max(now, first_day), last_day)
     calendar_days_left = max(0, (last_day - clamped_today).days)
@@ -647,16 +613,20 @@ def index():
     month_rows: List[Dict[str, Any]] = []
     if not month_df.empty:
         for _, r in month_df.iterrows():
-            month_rows.append({
-                "id": int(r["id"]),
-                "d": r["d"].isoformat() if isinstance(r["d"], date) else str(r["d"]),
-                "stock": str(r["stock"]),
-                "amount": float(r["amount"]),
-            })
+            month_rows.append(
+                {
+                    "id": int(r["id"]),
+                    "d": r["d"].isoformat() if isinstance(r["d"], date) else str(r["d"]),
+                    "stock": str(r["stock"]),
+                    "amount": float(r["amount"]),
+                }
+            )
 
     per_stock: List[Dict[str, Any]] = []
     if not month_df.empty:
-        by_stock = month_df.groupby("stock", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
+        by_stock = (
+            month_df.groupby("stock", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
+        )
         for _, r in by_stock.iterrows():
             per_stock.append({"stock": r["stock"], "total": float(r["amount"])})
 
@@ -678,12 +648,16 @@ def index():
             by_s = hist.groupby("stock", as_index=False)["amount"].sum()
             top = by_s.sort_values("amount", ascending=False).head(1)
             worst = by_s.sort_values("amount", ascending=True).head(1)
-            summary = type("S", (), {
-                "total": total,
-                "num": num,
-                "top": top.iloc[0]["stock"] if not top.empty else None,
-                "worst": worst.iloc[0]["stock"] if not worst.empty else None,
-            })
+            summary = type(
+                "S",
+                (),
+                {
+                    "total": total,
+                    "num": num,
+                    "top": top.iloc[0]["stock"] if not top.empty else None,
+                    "worst": worst.iloc[0]["stock"] if not worst.empty else None,
+                },
+            )
 
     def fmt(x: float) -> str:
         return f"{x:,.2f}"
@@ -710,6 +684,7 @@ def index():
 
     return render_template_string(BASE_HTML, body=body)
 
+
 @app.post("/save_target")
 @login_required
 def save_target():
@@ -719,6 +694,7 @@ def save_target():
     upsert_target(year, month, target)
     flash("Target saved.")
     return redirect(url_for("index", year=year, month=month))
+
 
 @app.post("/add_entry")
 @login_required
@@ -731,6 +707,7 @@ def add_entry():
     year = int(request.args.get("year", datetime.fromisoformat(d).year))
     month = int(request.args.get("month", datetime.fromisoformat(d).month))
     return redirect(url_for("index", year=year, month=month))
+
 
 @app.post("/delete_selected")
 @login_required
@@ -746,22 +723,28 @@ def delete_selected():
         flash("No rows were selected.")
     return redirect(url_for("index", year=year, month=month))
 
+
 @app.get("/api/month_data")
 @login_required
 def month_data_api():
     year = int(request.args.get("year"))
     month = int(request.args.get("month"))
+
     first_day, last_day = month_bounds(year, month)
     df = to_df(
         "SELECT d, stock, amount FROM earnings WHERE d BETWEEN :a AND :b ORDER BY d ASC",
         {"a": first_day.isoformat(), "b": last_day.isoformat()},
     )
+
     if df.empty:
-        return jsonify({
-            "daily": {"labels": [], "values": []},
-            "by_stock": {"labels": [], "values": []},
-            "cumulative": {"labels": [], "values": []},
-        })
+        return jsonify(
+            {
+                "daily": {"labels": [], "values": []},
+                "by_stock": {"labels": [], "values": []},
+                "cumulative": {"labels": [], "values": []},
+            }
+        )
+
     df["d"] = pd.to_datetime(df["d"]).dt.date
 
     daily = df.groupby("d", as_index=False)["amount"].sum()
@@ -777,130 +760,14 @@ def month_data_api():
     cum_labels = daily_labels
     cum_values = [float(x) for x in cum["cumulative"].tolist()]
 
-    return jsonify({
-        "daily": {"labels": daily_labels, "values": daily_values},
-        "by_stock": {"labels": by_labels, "values": by_values},
-        "cumulative": {"labels": cum_labels, "values": cum_values},
-    })
+    return jsonify(
+        {
+            "daily": {"labels": daily_labels, "values": daily_values},
+            "by_stock": {"labels": by_labels, "values": by_values},
+            "cumulative": {"labels": cum_labels, "values": cum_values},
+        }
+    )
 
-# ---------- Forecast API ----------
-
-@app.get("/api/forecast")
-@login_required
-def forecast_api():
-    """Monte Carlo forecast using bootstrapped daily returns derived from your entries.
-
-    Steps:
-    1) Aggregate historical daily P&L.
-    2) Infer a sequence of *daily returns* r_t = pnl_t / capital_{t-1} by simulating capital path from the provided starting corpus.
-    3) Build a non-parametric sampler of r_t, with optional winsorization.
-    4) Simulate future paths for N business/ calendar days, compounding capital.
-    5) Produce P10/P50/P90 envelopes per month for three risk profiles.
-    """
-    # --- Params ---
-    start_corpus = float(request.args.get("start", 5000))
-    months = int(request.args.get("months", 12))
-    sims = int(request.args.get("sims", 1000))
-    weekdays_only = request.args.get("weekdays", "1") == "1"
-    agg_mult = float(request.args.get("agg_mult", 1.5))   # leverage-ish multiplier
-    cons_mult = float(request.args.get("cons_mult", 0.7))  # conservative multiplier
-
-    # Clamp sanity
-    start_corpus = max(100.0, start_corpus)
-    months = max(1, min(36, months))
-    sims = max(100, min(5000, sims))
-
-    # --- Load history ---
-    hist = to_df("SELECT d, amount FROM earnings ORDER BY d ASC")
-    if hist.empty:
-        # No history → flat lines at start corpus
-        labels = [f"M{i}" for i in range(1, months+1)]
-        zeros = [float(start_corpus)] * months
-        return jsonify({
-            "labels": labels,
-            "ag": {"p10": zeros, "p50": zeros, "p90": zeros},
-            "md": {"p10": zeros, "p50": zeros, "p90": zeros},
-            "cs": {"p10": zeros, "p50": zeros, "p90": zeros},
-            "note": "No historical entries yet; results are placeholders."
-        })
-
-    hist["d"] = pd.to_datetime(hist["d"]).dt.date
-    daily = hist.groupby("d", as_index=False)["amount"].sum().sort_values("d")
-
-    # --- Infer daily returns from P&L stream and a running capital ---
-    cap = start_corpus
-    rets = []
-    for amt in daily["amount"].tolist():
-        if cap <= 0:
-            break
-        r = float(amt) / float(cap)
-        # soft clamp to avoid pathological outliers blowing up bootstrap
-        r = max(-0.9, min(0.9, r))
-        rets.append(r)
-        cap = cap + float(amt)
-
-    if len(rets) < 5:
-        labels = [f"M{i}" for i in range(1, months+1)]
-        flat = [float(start_corpus)] * months
-        return jsonify({
-            "labels": labels,
-            "ag": {"p10": flat, "p50": flat, "p90": flat},
-            "md": {"p10": flat, "p50": flat, "p90": flat},
-            "cs": {"p10": flat, "p50": flat, "p90": flat},
-            "note": "Not enough history to estimate a return distribution. Add more daily trades."
-        })
-
-    rets = np.array(rets, dtype=float)
-
-    # Winsorized copy for conservative sampling
-    low_q, high_q = np.quantile(rets, [0.1, 0.9])
-    rets_w = np.clip(rets, low_q, high_q)
-
-    # Helpers
-    def simulate_paths(mult: float, use_winsor: bool, tail_scale: float, dd_clip: float):
-        base = rets_w if use_winsor else rets
-        n_days_per_month = 21 if weekdays_only else 30
-        total_days = months * n_days_per_month
-        # Precompute monthly checkpoints
-        checkpoints = set([n_days_per_month * i for i in range(1, months+1)])
-        # Storage for sims
-        month_caps = [[] for _ in range(months)]
-
-        std = float(np.std(base)) if len(base) > 1 else 0.0
-        # Avoid zero std
-        if std == 0:
-            std = 1e-6
-        for _ in range(sims):
-            cap = start_corpus
-            day = 0
-            m_idx = 0
-            while day < total_days and cap > 0:
-                # bootstrap + heavy-tail noise
-                r = float(np.random.choice(base))
-                noise = np.random.standard_t(df=5) * (tail_scale * std)
-                r = (r + noise) * mult
-                # drawdown clip
-                r = max(dd_clip, r)
-                cap *= (1.0 + r)
-                day += 1
-                if day in checkpoints:
-                    month_caps[m_idx].append(cap)
-                    m_idx += 1
-        # Convert to percentiles per month
-        p10 = [float(np.percentile(m, 10)) if m else float('nan') for m in month_caps]
-        p50 = [float(np.percentile(m, 50)) if m else float('nan') for m in month_caps]
-        p90 = [float(np.percentile(m, 90)) if m else float('nan') for m in month_caps]
-        return {"p10": p10, "p50": p50, "p90": p90}
-
-    ag = simulate_paths(mult=agg_mult, use_winsor=False, tail_scale=0.5, dd_clip=-0.6)
-    md = simulate_paths(mult=1.0,      use_winsor=False, tail_scale=0.25, dd_clip=-0.4)
-    cs = simulate_paths(mult=cons_mult, use_winsor=True,  tail_scale=0.10, dd_clip=-0.3)
-
-    labels = [f"M{i}" for i in range(1, months+1)]
-    return jsonify({"labels": labels, "ag": ag, "md": md, "cs": cs})
-
-# Expose a friendly name in Jinja
-app.add_url_rule('/api/forecast', endpoint='forecast_api', view_func=forecast_api)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
