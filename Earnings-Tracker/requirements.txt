@@ -1,6 +1,9 @@
-Flask>=3.0.0         # Includes Werkzeug, Jinja2, click, itsdangerous
-SQLAlchemy>=2.0.25
-pandas>=2.2.0
-numpy>=1.26.0
-psycopg2-binary>=2.9.9   # Needed for Postgres (Render DATABASE_URL)
-gunicorn>=21.2.0        # Required for production on Render
+Flask>=2.3
+Werkzeug>=3.0
+pandas>=2.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+gunicorn>=21.2
+scikit-learn>=1.3
+numpy>=1.26
+scipy>=1.10
