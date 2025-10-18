@@ -502,7 +502,7 @@ INDEX_BODY = r"""
           {% if summary %}
           <div class="row text-center mt-3">
             <div class="col"><div class="metric">Total earned<br><span>{{ fmt(summary.total) }}</span></div></div>
-            <div class="col"><div class="metric"># entries<br><span>{{ summary.num) }}</span></div></div>
+            <div class="col"><div class="metric"># entries<br><span>{{ summary.num }}</span></div></div>
             <div class="col"><div class="metric">Top stock<br><span>{{ summary.top or '—' }}</span></div></div>
             <div class="col"><div class="metric">Worst stock<br><span>{{ summary.worst or '—' }}</span></div></div>
           </div>
