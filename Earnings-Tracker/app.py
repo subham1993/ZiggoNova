@@ -4,6 +4,7 @@ Monthly Stock Earnings Tracker — Flask Edition (Render-ready)
 - Simple authentication (single-user via env vars)
 - Alternate pastel-glass UI
 - Added: ML forecast (Aggressive / Moderate / Easy) with daily compounding
+- Added: graceful fallback forecast + friendly inline error display
 - No changes to existing routes' behavior — only additive endpoints/UI
 
 Quickstart (local)
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 import os
 import calendar
+import logging
+import traceback
 from datetime import date, datetime, timedelta
 from functools import wraps
 from typing import Any, Dict, List, Tuple
@@ -43,7 +46,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from werkzeug.security import check_password_hash, generate_password_hash
 
-# ---- NEW: ML deps
+# ---- ML deps
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
@@ -65,6 +68,11 @@ if not APP_PASSWORD_HASH:
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=SECRET_KEY)
+
+# Logger for forecast issues
+log = logging.getLogger("forecast")
+if not app.debug:
+    logging.basicConfig(level=logging.INFO)
 
 
 # ---------- Auth Utilities ----------
@@ -480,7 +488,7 @@ INDEX_BODY = r"""
                 <td>{{ s['stock'] }}</td>
                 <td class="text-end">{{ fmt(s['total']) }}</td>
               </tr>
-              {% endfor %}
+            {% endfor %}
             </tbody>
           </table>
         </div>
@@ -555,7 +563,7 @@ loadCharts();
 </script>
 """
 
-# ---- NEW: Forecast UI section (appended on the homepage)
+# ---- Forecast UI section (appended on the homepage)
 FORECAST_SECTION = r"""
 <div class="card card-soft p-3 mt-4">
   <div class="d-flex align-items-center justify-content-between">
@@ -582,11 +590,11 @@ FORECAST_SECTION = r"""
   <div class="row g-3 mt-2">
     <div class="col-md-7">
       <div class="small text-muted">Projected capital (line)</div>
-      <canvas id="fc-cap" height="240"></canvas>
+      <div id="fc-cap-holder"><canvas id="fc-cap" height="240"></canvas></div>
     </div>
     <div class="col-md-5">
       <div class="small text-muted">Monthly earnings vs targets (grouped bars)</div>
-      <canvas id="fc-earn" height="240"></canvas>
+      <div id="fc-earn-holder"><canvas id="fc-earn" height="240"></canvas></div>
     </div>
   </div>
 </div>
@@ -603,7 +611,19 @@ async function runForecast() {
   url.searchParams.set('months', months);
   const resp = await fetch(url);
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Forecast failed.'); return; }
+  if (!resp.ok) {
+    document.getElementById('fc-cap-holder').innerHTML = `
+      <div class="alert alert-warning card-soft">
+        <i class="bi bi-exclamation-triangle"></i>
+        ${data.error || 'Forecast failed.'}
+        <div class="small text-muted mt-1">Tip: add a few daily entries or set a monthly target.</div>
+      </div>`;
+    document.getElementById('fc-earn-holder').innerHTML = "";
+    return;
+  }
+
+  document.getElementById('fc-cap-holder').innerHTML = `<canvas id="fc-cap" height="240"></canvas>`;
+  document.getElementById('fc-earn-holder').innerHTML = `<canvas id="fc-earn" height="240"></canvas>`;
 
   // Capital line
   _killChart(_fcCharts.cap);
@@ -649,7 +669,7 @@ async function runForecast() {
 </script>
 """
 
-# ---------- ML Forecast Utilities (NEW) ----------
+# ---------- ML Forecast Utilities ----------
 
 def _load_daily_series() -> pd.DataFrame:
     """Return continuous daily series with columns ['ds','amount'] across all history."""
@@ -733,7 +753,6 @@ def _predict_next_days(daily: pd.DataFrame, horizon_days: int = 365) -> pd.DataF
             z = feat.dropna().copy()
             z["t"] = np.arange(len(z))
             mon_d = pd.get_dummies(z["mon"], prefix="mon", drop_first=True)
-            # align dummy columns
             for c in mon_cols:
                 if c not in mon_d:
                     mon_d[c] = 0
@@ -749,7 +768,6 @@ def _predict_next_days(daily: pd.DataFrame, horizon_days: int = 365) -> pd.DataF
     std    = residuals.std() if residuals is not None else 0.0
 
     for d in future_dates:
-        # append a new row with placeholder amount to build features
         work = pd.concat([work, pd.DataFrame({"ds":[d.date()], "amount":[np.nan]})], ignore_index=True)
         fx = _featureize(work).iloc[-1:].copy()
 
@@ -771,17 +789,12 @@ def _predict_next_days(daily: pd.DataFrame, horizon_days: int = 365) -> pd.DataF
             base = float(max(0.0, base))
 
         preds.append({"ds": d.date(), "base": base})
-
-        # update the just-predicted amount into work for lag features
         work.loc[work.index[-1], "amount"] = base
 
     pred_df = pd.DataFrame(preds)
-
-    # Scenarios via quantile shocks (and a touch of std spread)
-    pred_df["easy"]      = np.clip(pred_df["base"] + q_easy - 0.25*std, 0, None)
-    pred_df["moderate"]  = np.clip(pred_df["base"] + q_mod, 0, None)
-    pred_df["aggressive"]= np.clip(pred_df["base"] + q_aggr + 0.25*std, 0, None)
-
+    pred_df["easy"]       = np.clip(pred_df["base"] + q_easy - 0.25*std, 0, None)
+    pred_df["moderate"]   = np.clip(pred_df["base"] + q_mod, 0, None)
+    pred_df["aggressive"] = np.clip(pred_df["base"] + q_aggr + 0.25*std, 0, None)
     return pred_df[["ds","easy","moderate","aggressive","base"]]
 
 
@@ -917,7 +930,7 @@ def index():
         fmt=fmt,
     )
 
-    # ---- NEW: Append the Forecast section to the homepage
+    # Append Forecast section
     body = body + render_template_string(FORECAST_SECTION)
 
     return render_template_string(BASE_HTML, body=body)
@@ -1007,7 +1020,7 @@ def month_data_api():
     )
 
 
-# ---- NEW: Forecast API with compounding & scenario bands
+# ---- Forecast API with compounding & scenario bands (with graceful fallback)
 @app.get("/api/forecast")
 @login_required
 def forecast_api():
@@ -1022,82 +1035,104 @@ def forecast_api():
         start_cap = float(request.args.get("start_cap", 0.0))
     except Exception:
         return jsonify(error="Invalid start_cap"), 400
-    months = int(request.args.get("months", 12))
+
+    try:
+        months = int(request.args.get("months", 12))
+    except Exception:
+        return jsonify(error="Invalid months"), 400
+
     months = max(1, min(months, 36))
     horizon_days = int(round(months * 365/12))
 
-    # 1) Build history and ML forecast (daily earnings)
-    daily = _load_daily_series()
-    if daily.empty:
-        return jsonify(error="No historical earnings to train on."), 400
+    try:
+        # 1) Build history and ML forecast (daily earnings)
+        daily = _load_daily_series()
 
-    pred = _predict_next_days(daily, horizon_days=horizon_days).copy()
-    pred["month"] = pd.to_datetime(pred["ds"]).dt.to_period("M").astype(str)
+        # --- Graceful fallback if little/no data
+        min_days_needed = 7
+        if daily.empty or len(daily) < min_days_needed:
+            base = float(daily["amount"].mean()) if not daily.empty else 0.0
+            future = pd.date_range(date.today() + pd.Timedelta(days=1), periods=horizon_days, freq="D")
+            pred = pd.DataFrame({
+                "ds": future.date,
+                "easy": [base]*horizon_days,
+                "moderate": [base]*horizon_days,
+                "aggressive": [base]*horizon_days,
+            })
+        else:
+            pred = _predict_next_days(daily, horizon_days=horizon_days).copy()
 
-    # 2) Capital compounding (earnings are reinvested next day)
-    def compound(series):
-        cap = []
-        c = start_cap
-        for v in series:
-            c = c + float(v)
-            cap.append(c)
-        return cap
+        pred["month"] = pd.to_datetime(pred["ds"]).dt.to_period("M").astype(str)
 
-    pred["cap_easy"]       = compound(pred["easy"].values)
-    pred["cap_moderate"]   = compound(pred["moderate"].values)
-    pred["cap_aggressive"] = compound(pred["aggressive"].values)
+        # 2) Capital compounding (earnings are reinvested next day)
+        def compound(series):
+            cap = []
+            c = start_cap
+            for v in series:
+                c = c + float(v)
+                cap.append(c)
+            return cap
 
-    # 3) Monthly aggregates
-    agg = pred.groupby("month").agg(
-        earn_easy=("easy","sum"),
-        earn_moderate=("moderate","sum"),
-        earn_aggressive=("aggressive","sum"),
-        cap_easy=("cap_easy","last"),
-        cap_moderate=("cap_moderate","last"),
-        cap_aggressive=("cap_aggressive","last"),
-    ).reset_index()
+        pred["cap_easy"]       = compound(pred["easy"].values)
+        pred["cap_moderate"]   = compound(pred["moderate"].values)
+        pred["cap_aggressive"] = compound(pred["aggressive"].values)
 
-    # 4) Project targets (trend on existing monthly targets, fallback to current)
-    tgt = to_df("SELECT y,m,target FROM targets ORDER BY y,m")
-    if tgt.empty:
-        today = date.today()
-        cur_tgt_df = to_df("SELECT target FROM targets WHERE y=:y AND m=:m",
-                           {"y": today.year, "m": today.month})
-        base_tgt = float(cur_tgt_df["target"].iloc[0]) if not cur_tgt_df.empty else 0.0
-        monthly_target = [base_tgt for _ in range(len(agg))]
-    else:
-        tgt["t"] = np.arange(len(tgt))
-        X = tgt[["t"]].values
-        y = tgt["target"].values
-        lr = LinearRegression().fit(X, y)
-        start_t = int(tgt["t"].max()) + 1
-        monthly_target = [float(max(0.0, lr.predict([[start_t+i]])[0])) for i in range(len(agg))]
+        # 3) Monthly aggregates
+        agg = pred.groupby("month").agg(
+            earn_easy=("easy","sum"),
+            earn_moderate=("moderate","sum"),
+            earn_aggressive=("aggressive","sum"),
+            cap_easy=("cap_easy","last"),
+            cap_moderate=("cap_moderate","last"),
+            cap_aggressive=("cap_aggressive","last"),
+        ).reset_index()
 
-    # simple diagnostics
-    hist_days = int((pd.to_datetime(daily["ds"].max()) - pd.to_datetime(daily["ds"].min())).days) + 1
-    samples = int(len(daily))
-    diagnostics = {"history_days": hist_days, "samples": samples}
+        # 4) Project targets (trend on existing monthly targets, fallback to current)
+        tgt = to_df("SELECT y,m,target FROM targets ORDER BY y,m")
+        if tgt.empty:
+            today = date.today()
+            cur_tgt_df = to_df("SELECT target FROM targets WHERE y=:y AND m=:m",
+                            {"y": today.year, "m": today.month})
+            base_tgt = float(cur_tgt_df["target"].iloc[0]) if not cur_tgt_df.empty else 0.0
+            monthly_target = [base_tgt for _ in range(len(agg))]
+        else:
+            tgt["t"] = np.arange(len(tgt))
+            X = tgt[["t"]].values
+            y = tgt["target"].values
+            lr = LinearRegression().fit(X, y)
+            start_t = int(tgt["t"].max()) + 1
+            monthly_target = [float(max(0.0, lr.predict([[start_t+i]])[0])) for i in range(len(agg))]
 
-    # 5) Pack response
-    return jsonify({
-        "months": agg["month"].tolist(),
-        "earnings": {
-            "easy":      [float(x) for x in agg["earn_easy"]],
-            "moderate":  [float(x) for x in agg["earn_moderate"]],
-            "aggressive":[float(x) for x in agg["earn_aggressive"]],
-        },
-        "capital": {
-            "easy":      [float(x) for x in agg["cap_easy"]],
-            "moderate":  [float(x) for x in agg["cap_moderate"]],
-            "aggressive":[float(x) for x in agg["cap_aggressive"]],
-        },
-        "targets": monthly_target,
-        "meta": {
-            "start_cap": start_cap,
-            "horizon_months": months,
-            **diagnostics
-        }
-    })
+        # diagnostics
+        hist_days = int((pd.to_datetime(daily["ds"].max()) - pd.to_datetime(daily["ds"].min())).days) + 1 if not daily.empty else 0
+        samples = int(len(daily))
+        diagnostics = {"history_days": hist_days, "samples": samples}
+
+        # 5) Pack response
+        return jsonify({
+            "months": agg["month"].tolist(),
+            "earnings": {
+                "easy":      [float(x) for x in agg["earn_easy"]],
+                "moderate":  [float(x) for x in agg["earn_moderate"]],
+                "aggressive":[float(x) for x in agg["earn_aggressive"]],
+            },
+            "capital": {
+                "easy":      [float(x) for x in agg["cap_easy"]],
+                "moderate":  [float(x) for x in agg["cap_moderate"]],
+                "aggressive":[float(x) for x in agg["cap_aggressive"]],
+            },
+            "targets": monthly_target,
+            "meta": {
+                "start_cap": start_cap,
+                "horizon_months": months,
+                **diagnostics
+            }
+        })
+    except Exception as e:
+        log.error("Forecast error: %s\n%s", e, traceback.format_exc())
+        return jsonify(error="Unexpected server error during forecast."), 500
+
+
 
 
 if __name__ == "__main__":
